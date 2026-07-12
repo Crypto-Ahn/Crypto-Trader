@@ -9,11 +9,17 @@ export const AuthProvider = ({ children }) => {
   const [isAuthModalOpen, setAuthModalOpen] = useState(false);
   const [isPricingModalOpen, setPricingModalOpen] = useState(false);
 
+  const ADMIN_EMAILS = ['december2158@gmail.com', 'admin@admin.com'];
+
   // Initialize from Mock DB (localStorage)
   useEffect(() => {
     const storedUser = localStorage.getItem('crypto_user');
     if (storedUser) {
-      setUser(JSON.parse(storedUser));
+      let parsedUser = JSON.parse(storedUser);
+      if (ADMIN_EMAILS.includes(parsedUser.email)) {
+        parsedUser.isSubscribed = true;
+      }
+      setUser(parsedUser);
     }
   }, []);
 
@@ -22,6 +28,9 @@ export const AuthProvider = ({ children }) => {
     const users = JSON.parse(localStorage.getItem('crypto_users_db') || '{}');
     if (users[email] && users[email].password === password) {
       const loggedInUser = users[email];
+      if (ADMIN_EMAILS.includes(email)) {
+        loggedInUser.isSubscribed = true;
+      }
       setUser(loggedInUser);
       localStorage.setItem('crypto_user', JSON.stringify(loggedInUser));
       setAuthModalOpen(false);
@@ -38,7 +47,7 @@ export const AuthProvider = ({ children }) => {
       email,
       password, // In a real app, never store plain text passwords!
       trialStartDate: new Date().toISOString(),
-      isSubscribed: false
+      isSubscribed: ADMIN_EMAILS.includes(email)
     };
 
     users[email] = newUser;
