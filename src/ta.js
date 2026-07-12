@@ -158,6 +158,50 @@ export const analyzeData = (data, exchange = 'Binance') => {
     shortReasons.push(`[RSI] 수치가 70 초과로 과매수 구간`);
   }
 
+  // 7. Trendline Analysis (Linear Regression)
+  const n = 20;
+  const recent20Closes = closes.slice(-n);
+  if (recent20Closes.length === n) {
+    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+    for (let i = 0; i < n; i++) {
+      sumX += i;
+      sumY += recent20Closes[i];
+      sumXY += i * recent20Closes[i];
+      sumX2 += i * i;
+    }
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    const currentTrendlineValue = intercept + slope * (n - 1);
+    const prevTrendlineValue = intercept + slope * (n - 2);
+    
+    const prevCloseVal = recent20Closes[n - 2];
+    const currCloseVal = recent20Closes[n - 1];
+    
+    // Trendline Breakout/Breakdown
+    if (slope < 0 && prevCloseVal <= prevTrendlineValue && currCloseVal > currentTrendlineValue) {
+      longCount++;
+      longReasons.push(`[추세선 돌파] 단기 하락 추세선을 상향 돌파 (상승 반전 기대)`);
+    }
+    if (slope > 0 && prevCloseVal >= prevTrendlineValue && currCloseVal < currentTrendlineValue) {
+      shortCount++;
+      shortReasons.push(`[추세선 이탈] 단기 상승 추세선을 하향 이탈 (단기 하락 우려)`);
+    }
+
+    // Trendline Bounce
+    const currLow = lows[lows.length - 1];
+    const currHigh = highs[highs.length - 1];
+    
+    if (slope > 0 && currCloseVal > currentTrendlineValue && currLow <= currentTrendlineValue * 1.002) {
+      longCount += 0.5;
+      longReasons.push(`[추세선 지지] 상승 추세선 부근에서 지지 및 반등 (상승 추세 지속)`);
+    }
+    if (slope < 0 && currCloseVal < currentTrendlineValue && currHigh >= currentTrendlineValue * 0.998) {
+      shortCount += 0.5;
+      shortReasons.push(`[추세선 저항] 하락 추세선 부근에서 저항 확인 (하락 추세 지속)`);
+    }
+  }
+
   // Volume 가산점
   if (longCount > 0 && volSpike) {
     longCount += 0.5;
