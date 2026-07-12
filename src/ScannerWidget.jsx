@@ -43,63 +43,67 @@ export const ScannerWidget = ({ interval = '15m', onSelectSignal }) => {
         const { binance, upbit } = scanQueueRef.current;
         
         // If we ran out of symbols or didn't fetch them yet, wait and retry
-        if (binance.length === 0 || upbit.length === 0) {
+        if (binance.length === 0 && upbit.length === 0) {
           await new Promise(r => setTimeout(r, 2000));
           continue;
         }
 
         // Loop indices
-        if (bIndex >= binance.length) bIndex = 0;
-        if (uIndex >= upbit.length) uIndex = 0;
+        if (binance.length > 0 && bIndex >= binance.length) bIndex = 0;
+        if (upbit.length > 0 && uIndex >= upbit.length) uIndex = 0;
 
         // Alternate scanning Binance and Upbit
         try {
           // --- Binance Scan ---
-          const bSymbol = binance[bIndex];
-          if (mounted) setCurrentScan(`Binance: ${bSymbol}`);
-          const bData = await getScannerData('Binance', bSymbol, interval);
-          const bAnalysis = analyzeData(bData, 'Binance');
-          
-          if (bAnalysis && bAnalysis.type !== 'NEUTRAL') {
-            bAnalysis.interval = interval;
-            addSignal({
-              id: `Binance-${bSymbol}-${Date.now()}`,
-              exchange: 'Binance',
-              symbol: bSymbol,
-              type: bAnalysis.type,
-              price: bAnalysis.currentPrice,
-              reason: bAnalysis.setupReasons[0],
-              fullAnalysis: bAnalysis,
-              time: new Date()
-            });
+          if (binance.length > 0) {
+            const bSymbol = binance[bIndex];
+            if (mounted) setCurrentScan(`Binance: ${bSymbol}`);
+            const bData = await getScannerData('Binance', bSymbol, interval);
+            const bAnalysis = analyzeData(bData, 'Binance');
+            
+            if (bAnalysis && bAnalysis.type !== 'NEUTRAL') {
+              bAnalysis.interval = interval;
+              addSignal({
+                id: `Binance-${bSymbol}-${Date.now()}`,
+                exchange: 'Binance',
+                symbol: bSymbol,
+                type: bAnalysis.type,
+                price: bAnalysis.currentPrice,
+                reason: bAnalysis.setupReasons[0],
+                fullAnalysis: bAnalysis,
+                time: new Date()
+              });
+            }
+            
+            bIndex++;
+            // Wait 1 second before next request to avoid rate limit
+            await new Promise(r => setTimeout(r, 1000));
           }
-          
-          // Wait 1 second before next request to avoid rate limit
-          await new Promise(r => setTimeout(r, 1000));
           if (!mounted || !isScanning) break;
 
           // --- Upbit Scan ---
-          const uSymbol = upbit[uIndex];
-          if (mounted) setCurrentScan(`Upbit: ${uSymbol}`);
-          const uData = await getScannerData('Upbit', uSymbol, interval);
-          const uAnalysis = analyzeData(uData, 'Upbit');
+          if (upbit.length > 0) {
+            const uSymbol = upbit[uIndex];
+            if (mounted) setCurrentScan(`Upbit: ${uSymbol}`);
+            const uData = await getScannerData('Upbit', uSymbol, interval);
+            const uAnalysis = analyzeData(uData, 'Upbit');
 
-          if (uAnalysis && uAnalysis.type !== 'NEUTRAL') {
-            uAnalysis.interval = interval;
-            addSignal({
-              id: `Upbit-${uSymbol}-${Date.now()}`,
-              exchange: 'Upbit',
-              symbol: uSymbol,
-              type: uAnalysis.type,
-              price: uAnalysis.currentPrice,
-              reason: uAnalysis.setupReasons[0],
-              fullAnalysis: uAnalysis,
-              time: new Date()
-            });
+            if (uAnalysis && uAnalysis.type !== 'NEUTRAL') {
+              uAnalysis.interval = interval;
+              addSignal({
+                id: `Upbit-${uSymbol}-${Date.now()}`,
+                exchange: 'Upbit',
+                symbol: uSymbol,
+                type: uAnalysis.type,
+                price: uAnalysis.currentPrice,
+                reason: uAnalysis.setupReasons[0],
+                fullAnalysis: uAnalysis,
+                time: new Date()
+              });
+            }
+
+            uIndex++;
           }
-
-          bIndex++;
-          uIndex++;
           
           // Wait 1 second before next cycle
           await new Promise(r => setTimeout(r, 1000));

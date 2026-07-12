@@ -16,9 +16,7 @@ export const AuthProvider = ({ children }) => {
     const storedUser = localStorage.getItem('crypto_user');
     if (storedUser) {
       let parsedUser = JSON.parse(storedUser);
-      if (ADMIN_EMAILS.includes(parsedUser.email)) {
-        parsedUser.isSubscribed = true;
-      }
+      // Removed admin auto-subscription temporarily for testing
       setUser(parsedUser);
     }
   }, []);
@@ -28,9 +26,6 @@ export const AuthProvider = ({ children }) => {
     const users = JSON.parse(localStorage.getItem('crypto_users_db') || '{}');
     if (users[email] && users[email].password === password) {
       const loggedInUser = users[email];
-      if (ADMIN_EMAILS.includes(email)) {
-        loggedInUser.isSubscribed = true;
-      }
       setUser(loggedInUser);
       localStorage.setItem('crypto_user', JSON.stringify(loggedInUser));
       setAuthModalOpen(false);
@@ -47,7 +42,7 @@ export const AuthProvider = ({ children }) => {
       email,
       password, // In a real app, never store plain text passwords!
       trialStartDate: new Date().toISOString(),
-      isSubscribed: ADMIN_EMAILS.includes(email)
+      isSubscribed: false
     };
 
     users[email] = newUser;
@@ -78,6 +73,23 @@ export const AuthProvider = ({ children }) => {
     setPricingModalOpen(false);
   };
 
+  const unsubscribe = () => {
+    if (!user) return;
+    const updatedUser = { 
+      ...user, 
+      isSubscribed: false,
+      trialStartDate: "2000-01-01T00:00:00.000Z" // Expire trial instantly to show locked UI
+    };
+    delete updatedUser.plan;
+    setUser(updatedUser);
+    localStorage.setItem('crypto_user', JSON.stringify(updatedUser));
+    
+    // Update DB
+    const users = JSON.parse(localStorage.getItem('crypto_users_db') || '{}');
+    users[user.email] = updatedUser;
+    localStorage.setItem('crypto_users_db', JSON.stringify(users));
+  };
+
   // Helper to check trial status
   const getTrialStatus = () => {
     if (!user) return { isActive: false, hoursLeft: 0 };
@@ -101,6 +113,7 @@ export const AuthProvider = ({ children }) => {
       register,
       logout,
       subscribe,
+      unsubscribe,
       getTrialStatus,
       isAuthModalOpen,
       setAuthModalOpen,
