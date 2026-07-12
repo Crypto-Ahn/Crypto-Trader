@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, TrendingUp, TrendingDown, AlertCircle, Info, Lock, ArrowUpRight, ArrowDownRight, Minus, ClipboardList } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, AlertCircle, Info, Lock, ArrowUpRight, ArrowDownRight, Minus, ClipboardList, Key } from 'lucide-react';
 import './App.css';
 import { getBinanceData, getUpbitData, getBinanceSymbols, getUpbitSymbols } from './api';
 import { analyzeData } from './ta';
@@ -53,6 +53,22 @@ const AuthModal = () => {
     }
   };
 
+  const handleForgotPassword = () => {
+    const users = JSON.parse(localStorage.getItem('crypto_users_db') || '{}');
+    if (Object.keys(users).length === 0) {
+      alert("등록된 계정이 없습니다.");
+      return;
+    }
+    
+    if (email && users[email]) {
+      alert(`해당 계정의 비밀번호는 [ ${users[email].password} ] 입니다.`);
+    } else {
+      // Show all accounts for easy testing in mock DB
+      const accountList = Object.values(users).map(u => `이메일: ${u.email}\n비밀번호: ${u.password}`).join('\n\n');
+      alert(`[로컬 테스트용 계정 복구]\n가입하신 이메일을 입력창에 적고 아이콘을 누르면 해당 비밀번호를 찾아줍니다.\n또는 현재 등록된 모든 계정은 아래와 같습니다:\n\n${accountList}`);
+    }
+  };
+
   return (
     <div className="modal-overlay">
       <div className="modal-content">
@@ -63,9 +79,17 @@ const AuthModal = () => {
             <label>이메일</label>
             <input type="email" required value={email} onChange={e => setEmail(e.target.value)} />
           </div>
-          <div className="form-group">
+          <div className="form-group" style={{ position: 'relative' }}>
             <label>비밀번호</label>
-            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} />
+            <input type="password" required value={password} onChange={e => setPassword(e.target.value)} style={{ paddingRight: isLogin ? '36px' : '12px' }} />
+            {isLogin && (
+              <Key 
+                size={18} 
+                style={{ position: 'absolute', right: '12px', top: '34px', cursor: 'pointer', color: 'var(--text-secondary)' }} 
+                onClick={handleForgotPassword}
+                title="비밀번호 찾기"
+              />
+            )}
           </div>
           <button type="submit" className="primary full-btn">
             {isLogin ? '로그인' : '가입하고 1일 무료 체험 시작하기'}
