@@ -248,31 +248,33 @@ export const analyzeData = (data, exchange = 'Binance') => {
     return valleys;
   };
 
-  const lookback = 30; // Changed from 20 to 30 for TP/SL lookback
-  const recent30 = data.slice(-lookback);
-  const olderData = data.slice(0, -lookback);
+  const lookbackTp = 30; // For TP peaks/valleys
+  const recent30 = data.slice(-lookbackTp);
+  const olderData = data.slice(0, -lookbackTp);
 
+  // Find 20-candle swing high/low for dynamic SL placement
+  const lookbackSl = 20;
   // Filter out glitch candles (where body is virtually zero, typical of 0-volume anomalies on stablecoins)
-  let recentDataForSl = recent30.filter(d => Math.abs(d.close - d.open) / currentPrice > 0.00001);
-  if (recentDataForSl.length === 0) recentDataForSl = recent30;
+  let recentDataForSl = data.slice(-lookbackSl).filter(d => Math.abs(d.close - d.open) / currentPrice > 0.00001);
+  if (recentDataForSl.length === 0) recentDataForSl = data.slice(-lookbackSl);
 
-  const swingLow = Math.min(...recentDataForSl.map(d => d.low));
-  const swingHigh = Math.max(...recentDataForSl.map(d => d.high));
-  const range = swingHigh - swingLow;
+  const slSwingLow = Math.min(...recentDataForSl.map(d => d.low));
+  const slSwingHigh = Math.max(...recentDataForSl.map(d => d.high));
+  const slRange = slSwingHigh - slSwingLow;
   
-  // Padding is 20% of the range (or a very small fallback if range is 0)
-  const padding = range > 0 ? range * 0.2 : currentPrice * 0.001;
+  // Padding is 20% of the 20-candle range (or a very small fallback if range is 0)
+  const slPadding = slRange > 0 ? slRange * 0.2 : currentPrice * 0.001;
 
   if (tempType === 'LONG') {
-    // SL: Recent 30-candle low minus padding
-    stopLoss = swingLow - padding;
+    // SL: Recent 20-candle low minus padding
+    stopLoss = slSwingLow - slPadding;
     
     let risk = entry - stopLoss;
     if (risk <= 0) risk = currentPrice * 0.001; // Fallback
     
     let recentPeaks = findPeaks(recent30).filter(p => p > entry).sort((a, b) => a - b);
     if (recentPeaks.length === 0) {
-      if (swingHigh > entry) recentPeaks = [swingHigh];
+      if (slSwingHigh > entry) recentPeaks = [slSwingHigh];
       else recentPeaks = [entry + risk * 1.5];
     }
 
@@ -292,15 +294,15 @@ export const analyzeData = (data, exchange = 'Binance') => {
     tp2 = allTps[1];
     tp3 = allTps[2];
   } else if (tempType === 'SHORT') {
-    // SL: Recent 30-candle high plus padding
-    stopLoss = swingHigh + padding;
+    // SL: Recent 20-candle high plus padding
+    stopLoss = slSwingHigh + slPadding;
     
     let risk = stopLoss - entry;
     if (risk <= 0) risk = currentPrice * 0.001; // Fallback
     
     let recentValleys = findValleys(recent30).filter(v => v < entry).sort((a, b) => b - a);
     if (recentValleys.length === 0) {
-      if (swingLow < entry) recentValleys = [swingLow];
+      if (slSwingLow < entry) recentValleys = [slSwingLow];
       else recentValleys = [entry - risk * 1.5];
     }
 
