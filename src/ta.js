@@ -228,40 +228,97 @@ export const analyzeData = (data, exchange = 'Binance') => {
   let takeProfit, stopLoss, tp1, tp2, tp3;
   const entrySpread = 0.001; // 0.1% entry range
 
-  // Find 20-candle swing high/low for dynamic SL placement
-  const lookback = 20;
+  const findPeaks = (dataSlice) => {
+    const peaks = [];
+    for (let i = 1; i < dataSlice.length - 1; i++) {
+      if (dataSlice[i].high > dataSlice[i - 1].high && dataSlice[i].high > dataSlice[i + 1].high) {
+        peaks.push(dataSlice[i].high);
+      }
+    }
+    return peaks;
+  };
+
+  const findValleys = (dataSlice) => {
+    const valleys = [];
+    for (let i = 1; i < dataSlice.length - 1; i++) {
+      if (dataSlice[i].low < dataSlice[i - 1].low && dataSlice[i].low < dataSlice[i + 1].low) {
+        valleys.push(dataSlice[i].low);
+      }
+    }
+    return valleys;
+  };
+
+  const lookback = 30; // Changed from 20 to 30 for TP/SL lookback
+  const recent30 = data.slice(-lookback);
+  const olderData = data.slice(0, -lookback);
+
   // Filter out glitch candles (where body is virtually zero, typical of 0-volume anomalies on stablecoins)
-  let recentDataForSl = data.slice(-lookback).filter(d => Math.abs(d.close - d.open) / currentPrice > 0.00001);
-  if (recentDataForSl.length === 0) recentDataForSl = data.slice(-lookback);
+  let recentDataForSl = recent30.filter(d => Math.abs(d.close - d.open) / currentPrice > 0.00001);
+  if (recentDataForSl.length === 0) recentDataForSl = recent30;
 
   const swingLow = Math.min(...recentDataForSl.map(d => d.low));
   const swingHigh = Math.max(...recentDataForSl.map(d => d.high));
   const range = swingHigh - swingLow;
   
-  // Padding is 20% of the 20-candle range (or a very small fallback if range is 0)
+  // Padding is 20% of the range (or a very small fallback if range is 0)
   const padding = range > 0 ? range * 0.2 : currentPrice * 0.001;
 
   if (tempType === 'LONG') {
-    // SL: Recent 20-candle low minus padding
+    // SL: Recent 30-candle low minus padding
     stopLoss = swingLow - padding;
     
-    // Risk is simply the distance from Entry to SL
     let risk = entry - stopLoss;
     if (risk <= 0) risk = currentPrice * 0.001; // Fallback
     
-    tp1 = entry + risk * 1.5; // 1:1.5 RR
-    tp2 = entry + risk * 2.5; // 1:2.5 RR
-    tp3 = entry + risk * 4.0; // 1:4.0 RR
+    let recentPeaks = findPeaks(recent30).filter(p => p > entry).sort((a, b) => a - b);
+    if (recentPeaks.length === 0) {
+      if (swingHigh > entry) recentPeaks = [swingHigh];
+      else recentPeaks = [entry + risk * 1.5];
+    }
+
+    let allTps = [...new Set(recentPeaks)];
+
+    if (allTps.length < 3) {
+      const highestRecent = allTps[allTps.length - 1];
+      const olderPeaks = findPeaks(olderData).filter(p => p > highestRecent).sort((a, b) => a - b);
+      allTps = allTps.concat([...new Set(olderPeaks)]);
+    }
+
+    while (allTps.length < 3) {
+      allTps.push(allTps[allTps.length - 1] + risk);
+    }
+
+    tp1 = allTps[0];
+    tp2 = allTps[1];
+    tp3 = allTps[2];
   } else if (tempType === 'SHORT') {
-    // SL: Recent 20-candle high plus padding
+    // SL: Recent 30-candle high plus padding
     stopLoss = swingHigh + padding;
     
     let risk = stopLoss - entry;
     if (risk <= 0) risk = currentPrice * 0.001; // Fallback
     
-    tp1 = entry - risk * 1.5;
-    tp2 = entry - risk * 2.5;
-    tp3 = entry - risk * 4.0;
+    let recentValleys = findValleys(recent30).filter(v => v < entry).sort((a, b) => b - a);
+    if (recentValleys.length === 0) {
+      if (swingLow < entry) recentValleys = [swingLow];
+      else recentValleys = [entry - risk * 1.5];
+    }
+
+    let allTps = [...new Set(recentValleys)];
+
+    if (allTps.length < 3) {
+      const lowestRecent = allTps[allTps.length - 1];
+      const olderValleys = findValleys(olderData).filter(v => v < lowestRecent).sort((a, b) => b - a);
+      allTps = allTps.concat([...new Set(olderValleys)]);
+    }
+
+    while (allTps.length < 3) {
+      allTps.push(allTps[allTps.length - 1] - risk);
+    }
+
+    tp1 = allTps[0];
+    tp2 = allTps[1];
+    tp3 = allTps[2];
   } else {
     entry = currentPrice;
     tp1 = currentPrice;
