@@ -1,426 +1,172 @@
-import { RSI, MACD, SMA, EMA, BollingerBands, CCI } from 'technicalindicators';
+import { kmeans } from 'ml-kmeans';
 
-export const analyzeData = (data, exchange = 'Binance') => {
-  if (!data || data.length < 60) return null;
+/**
+ * SuperTrend AI Clustering Logic
+ * Inspired by LuxAlgo
+ */
 
-  const formatPrice = (p) => {
-    if (p < 0.001) return p.toFixed(6);
-    if (p < 1) return p.toFixed(5);
-    if (p < 100) return p.toFixed(4);
-    if (p < 1000) return p.toFixed(2);
-    return p.toFixed(0);
-  };
-
-  // Extract closes and highs/lows
-  const closes = data.map(d => d.close);
-  const highs = data.map(d => d.high);
-  const lows = data.map(d => d.low);
-
-  // Calculate Indicators safely
-  let rsiResult = [];
-  try { rsiResult = RSI.calculate({ values: closes, period: 14 }); } catch(e){}
-  
-  let macdResult = [];
-  try {
-    macdResult = MACD.calculate({
-      values: closes,
-      fastPeriod: 12,
-      slowPeriod: 26,
-      signalPeriod: 9,
-      SimpleMAOscillator: false,
-      SimpleMASignal: false
-    });
-  } catch(e){}
-
-  const currentPrice = closes[closes.length - 1];
-  const currentRsi = rsiResult.length > 0 ? rsiResult[rsiResult.length - 1] : 50;
-  const prevRsi = rsiResult.length > 1 ? rsiResult[rsiResult.length - 2] : 50;
-  const currentMacd = macdResult.length > 0 ? macdResult[macdResult.length - 1] : { histogram: 0, MACD: 0, signal: 0 };
-  const prevMacd = macdResult.length > 1 ? macdResult[macdResult.length - 2] : { histogram: 0, MACD: 0, signal: 0 };
-
-  // Pivot Points (Classic)
-  const prevHigh = highs[highs.length - 2] || currentPrice;
-  const prevLow = lows[lows.length - 2] || currentPrice;
-  const prevClose = closes[closes.length - 2] || currentPrice;
-  const pivot = (prevHigh + prevLow + prevClose) / 3;
-  const r1 = (2 * pivot) - prevLow;
-  const r2 = pivot + (prevHigh - prevLow);
-  const s1 = (2 * pivot) - prevHigh;
-  const s2 = pivot - (prevHigh - prevLow);
-
-  // Divergence Detection (Look back 20 candles)
-  const recentCloses = closes.slice(-21, -1);
-  const recentRsis = rsiResult.slice(-21, -1);
-  
-  const lowestRecentClose = Math.min(...recentCloses);
-  const lowestRecentCloseIdx = recentCloses.indexOf(lowestRecentClose);
-  const rsiAtLowestClose = recentRsis[lowestRecentCloseIdx] || 50;
-
-  const highestRecentClose = Math.max(...recentCloses);
-  const highestRecentCloseIdx = recentCloses.indexOf(highestRecentClose);
-  const rsiAtHighestClose = recentRsis[highestRecentCloseIdx] || 50;
-
-  const bullishDivergence = currentPrice <= lowestRecentClose * 1.0005 && currentRsi > rsiAtLowestClose + 2 && currentRsi < 45;
-  const bearishDivergence = currentPrice >= highestRecentClose * 0.9995 && currentRsi < rsiAtHighestClose - 2 && currentRsi > 55;
-
-  let ema20Result = [];
-  try { ema20Result = EMA.calculate({ values: closes, period: 20 }); } catch(e){}
-
-  let ema200Result = [];
-  try { ema200Result = EMA.calculate({ values: closes, period: 200 }); } catch(e){}
-
-  let bbResult = [];
-  try { bbResult = BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 }); } catch(e){}
-
-  let cciResult = [];
-  try { cciResult = CCI.calculate({ high: highs, low: lows, close: closes, period: 20 }); } catch(e){}
-
-  // Calculate volume SMA for volume spike detection
-  const volumes = data.map(d => d.volume || 0);
-  let volSmaResult = [];
-  try { volSmaResult = SMA.calculate({ values: volumes, period: 20 }); } catch(e){}
-
-  const currentEma20 = ema20Result.length > 0 ? ema20Result[ema20Result.length - 1] : currentPrice;
-  const currentEma200 = ema200Result.length > 0 ? ema200Result[ema200Result.length - 1] : currentPrice;
-  const currentBB = bbResult.length > 0 ? bbResult[bbResult.length - 1] : { lower: currentPrice, upper: currentPrice, middle: currentPrice };
-  const currentCci = cciResult.length > 0 ? cciResult[cciResult.length - 1] : 0;
-  
-  const currentVol = volumes.length > 0 ? volumes[volumes.length - 1] : 0;
-  const currentVolSma = volSmaResult.length > 0 ? volSmaResult[volSmaResult.length - 1] : 0;
-  const volSpike = currentVol > currentVolSma * 1.5;
-
-  // MACD Crosses
-  const macdBullCross = prevMacd.histogram <= 0 && currentMacd.histogram > 0;
-  const macdBearCross = prevMacd.histogram >= 0 && currentMacd.histogram < 0;
-
-  let longCount = 0;
-  let shortCount = 0;
-  const longReasons = [];
-  const shortReasons = [];
-
-  // 1. RSI Divergence
-  if (bullishDivergence) {
-    longCount++;
-    longReasons.push(`[RSI 다이버전스] 가격 신저점 불구 RSI 저점 상승 (상승 반전 신호)`);
-  }
-  if (bearishDivergence) {
-    shortCount++;
-    shortReasons.push(`[RSI 다이버전스] 가격 신고점 불구 RSI 고점 하락 (하락 반전 신호)`);
-  }
-
-  // 2. MACD Cross
-  if (macdBullCross) {
-    longCount++;
-    longReasons.push(`[MACD] 히스토그램 양수 전환 (단기 매수 모멘텀 발생)`);
-  }
-  if (macdBearCross) {
-    shortCount++;
-    shortReasons.push(`[MACD] 히스토그램 음수 전환 (단기 매도 모멘텀 발생)`);
-  }
-
-  // 3. EMA (20, 200)
-  if (currentEma20 > currentEma200 && currentPrice > currentEma20) {
-    longCount++;
-    longReasons.push(`[EMA] 20선이 200선 위에 위치하며 가격이 20선 지지 (정배열 상승세)`);
-  }
-  if (currentEma20 < currentEma200 && currentPrice < currentEma20) {
-    shortCount++;
-    shortReasons.push(`[EMA] 20선이 200선 아래에 위치하며 가격이 20선 저항 (역배열 하락세)`);
-  }
-
-  // 4. Bollinger Bands
-  if (currentPrice <= currentBB.lower * 1.002) {
-    longCount++;
-    longReasons.push(`[볼린저 밴드] 가격이 하단 밴드에 근접하거나 이탈 (과매도/반등 가능성)`);
-  }
-  if (currentPrice >= currentBB.upper * 0.998) {
-    shortCount++;
-    shortReasons.push(`[볼린저 밴드] 가격이 상단 밴드에 근접하거나 돌파 (과매수/하락 가능성)`);
-  }
-
-  // 5. CCI
-  if (currentCci < -100) {
-    longCount++;
-    longReasons.push(`[CCI] -100 미만으로 과매도 구간 진입`);
-  }
-  if (currentCci > 100) {
-    shortCount++;
-    shortReasons.push(`[CCI] 100 초과로 과매수 구간 진입`);
-  }
-
-  // 6. RSI Absolute
-  if (currentRsi < 30) {
-    longCount++;
-    longReasons.push(`[RSI] 수치가 30 미만으로 과매도 구간`);
-  }
-  if (currentRsi > 70) {
-    shortCount++;
-    shortReasons.push(`[RSI] 수치가 70 초과로 과매수 구간`);
-  }
-
-  // 7. Trendline Analysis (Linear Regression)
-  const n = 20;
-  const recent20Closes = closes.slice(-n);
-  if (recent20Closes.length === n) {
-    let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
-    for (let i = 0; i < n; i++) {
-      sumX += i;
-      sumY += recent20Closes[i];
-      sumXY += i * recent20Closes[i];
-      sumX2 += i * i;
+export function calculateATR(klines, period) {
+    const atr = [];
+    for (let i = 0; i < klines.length; i++) {
+        if (i === 0) {
+            atr.push(klines[i].high - klines[i].low);
+            continue;
+        }
+        const high = klines[i].high;
+        const low = klines[i].low;
+        const prevClose = klines[i - 1].close;
+        const tr = Math.max(
+            high - low,
+            Math.abs(high - prevClose),
+            Math.abs(low - prevClose)
+        );
+        atr.push((atr[i - 1] * (period - 1) + tr) / period);
     }
-    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
-    const intercept = (sumY - slope * sumX) / n;
+    return atr;
+}
+
+export function calculateSuperTrend(klines, atrPeriod, multiplier) {
+    const atr = calculateATR(klines, atrPeriod);
+    const supertrend = [];
     
-    const currentTrendlineValue = intercept + slope * (n - 1);
-    const prevTrendlineValue = intercept + slope * (n - 2);
+    let upperBand = 0;
+    let lowerBand = 0;
+    let trend = 1; // 1 for Uptrend, -1 for Downtrend
+    let trendValue = 0;
+
+    for (let i = 0; i < klines.length; i++) {
+        const hl2 = (klines[i].high + klines[i].low) / 2;
+        const basicUpperBand = hl2 + multiplier * atr[i];
+        const basicLowerBand = hl2 - multiplier * atr[i];
+
+        if (i === 0) {
+            upperBand = basicUpperBand;
+            lowerBand = basicLowerBand;
+            trendValue = lowerBand;
+            supertrend.push({ value: trendValue, trend });
+            continue;
+        }
+
+        const prevClose = klines[i - 1].close;
+        
+        upperBand = (basicUpperBand < upperBand || prevClose > upperBand) ? basicUpperBand : upperBand;
+        lowerBand = (basicLowerBand > lowerBand || prevClose < lowerBand) ? basicLowerBand : lowerBand;
+
+        if (trend === 1 && klines[i].close < lowerBand) trend = -1;
+        if (trend === -1 && klines[i].close > upperBand) trend = 1;
+
+        trendValue = trend === 1 ? lowerBand : upperBand;
+        supertrend.push({ value: trendValue, trend });
+    }
     
-    const prevCloseVal = recent20Closes[n - 2];
-    const currCloseVal = recent20Closes[n - 1];
+    return supertrend;
+}
+
+export function calculateAISuperTrend(klines, numClusters = 3) {
+    // Generate permutations of SuperTrend
+    // (A typical LuxAlgo script might test ATRs from 10 to 20 and Factors from 1.0 to 4.0)
+    // To keep JS performant, we'll test a representative sample:
+    const atrs = [10, 14, 20];
+    const factors = [1.5, 2.0, 3.0, 4.0];
     
-    // Trendline Breakout/Breakdown
-    if (slope < 0 && prevCloseVal <= prevTrendlineValue && currCloseVal > currentTrendlineValue) {
-      longCount++;
-      longReasons.push(`[추세선 돌파] 단기 하락 추세선을 상향 돌파 (상승 반전 기대)`);
-    }
-    if (slope > 0 && prevCloseVal >= prevTrendlineValue && currCloseVal < currentTrendlineValue) {
-      shortCount++;
-      shortReasons.push(`[추세선 이탈] 단기 상승 추세선을 하향 이탈 (단기 하락 우려)`);
-    }
-
-    // Trendline Bounce
-    const currLow = lows[lows.length - 1];
-    const currHigh = highs[highs.length - 1];
+    const permutations = [];
     
-    if (slope > 0 && currCloseVal > currentTrendlineValue && currLow <= currentTrendlineValue * 1.002) {
-      longCount += 0.5;
-      longReasons.push(`[추세선 지지] 상승 추세선 부근에서 지지 및 반등 (상승 추세 지속)`);
+    for (const a of atrs) {
+        for (const f of factors) {
+            permutations.push(calculateSuperTrend(klines, a, f));
+        }
     }
-    if (slope < 0 && currCloseVal < currentTrendlineValue && currHigh >= currentTrendlineValue * 0.998) {
-      shortCount += 0.5;
-      shortReasons.push(`[추세선 저항] 하락 추세선 부근에서 저항 확인 (하락 추세 지속)`);
-    }
-  }
-
-  // Volume 가산점
-  if (longCount > 0 && volSpike) {
-    longCount += 0.5;
-    longReasons.push(`[Volume] 평균 대비 1.5배 이상의 강한 매수 거래량 동반`);
-  }
-  if (shortCount > 0 && volSpike) {
-    shortCount += 0.5;
-    shortReasons.push(`[Volume] 평균 대비 1.5배 이상의 강한 매도 거래량 동반`);
-  }
-
-  let tempType = 'NEUTRAL';
-  if (longCount >= 2) {
-    tempType = 'LONG';
-  } else if (shortCount >= 2) {
-    if (exchange === 'Upbit') {
-      tempType = 'NEUTRAL'; // Force neutral for Upbit short signals
-    } else {
-      tempType = 'SHORT';
-    }
-  }
-
-  // Calculate Entry, TP, SL based on Recent Swing High/Low
-  let entry = currentPrice;
-  let takeProfit, stopLoss, tp1, tp2, tp3;
-  const entrySpread = 0.001; // 0.1% entry range
-
-  const findPeaks = (dataSlice) => {
-    const peaks = [];
-    for (let i = 1; i < dataSlice.length - 1; i++) {
-      if (dataSlice[i].high > dataSlice[i - 1].high && dataSlice[i].high > dataSlice[i + 1].high) {
-        peaks.push(dataSlice[i].high);
-      }
-    }
-    return peaks;
-  };
-
-  const findValleys = (dataSlice) => {
-    const valleys = [];
-    for (let i = 1; i < dataSlice.length - 1; i++) {
-      if (dataSlice[i].low < dataSlice[i - 1].low && dataSlice[i].low < dataSlice[i + 1].low) {
-        valleys.push(dataSlice[i].low);
-      }
-    }
-    return valleys;
-  };
-
-  const lookbackTp = 30; // For TP peaks/valleys
-  const recent30 = data.slice(-lookbackTp);
-  const olderData = data.slice(0, -lookbackTp);
-
-  // Find 20-candle swing high/low for dynamic SL placement
-  const lookbackSl = 20;
-  // Filter out glitch candles (where body is virtually zero, typical of 0-volume anomalies on stablecoins)
-  let recentDataForSl = data.slice(-lookbackSl).filter(d => Math.abs(d.close - d.open) / currentPrice > 0.00001);
-  if (recentDataForSl.length === 0) recentDataForSl = data.slice(-lookbackSl);
-
-  const slSwingLow = Math.min(...recentDataForSl.map(d => d.low));
-  const slSwingHigh = Math.max(...recentDataForSl.map(d => d.high));
-  const slRange = slSwingHigh - slSwingLow;
-  
-  // Padding is 20% of the 20-candle range (or a very small fallback if range is 0)
-  const slPadding = slRange > 0 ? slRange * 0.2 : currentPrice * 0.001;
-
-  if (tempType === 'LONG') {
-    // SL: Recent 20-candle low minus padding
-    stopLoss = slSwingLow - slPadding;
     
-    let risk = entry - stopLoss;
-    if (risk <= 0) risk = currentPrice * 0.001; // Fallback
+    const numPermutations = permutations.length;
+    const aiSuperTrend = [];
     
-    let recentPeaks = findPeaks(recent30).filter(p => p > entry).sort((a, b) => a - b);
-    if (recentPeaks.length === 0) {
-      if (slSwingHigh > entry) recentPeaks = [slSwingHigh];
-      else recentPeaks = [entry + risk * 1.5];
+    for (let i = 0; i < klines.length; i++) {
+        if (i < 20) {
+             // Not enough data for stable clustering
+             aiSuperTrend.push(null);
+             continue;
+        }
+        
+        // Extract values for this candle across all permutations
+        const candleData = [];
+        let bullishCount = 0;
+        let bearishCount = 0;
+        
+        for (let p = 0; p < numPermutations; p++) {
+            const val = permutations[p][i].value;
+            const dir = permutations[p][i].trend;
+            candleData.push([val]); // ml-kmeans expects 2D array
+            if (dir === 1) bullishCount++;
+            else bearishCount++;
+        }
+        
+        try {
+            // Apply K-Means
+            let result;
+            try {
+                result = kmeans(candleData, numClusters);
+            } catch (kErr) {
+                // ml-kmeans can throw if there are fewer unique points than k
+                // In this case, just use k=1 or fallback
+                result = kmeans(candleData, 1);
+            }
+            
+            // Identify Best, Avg, Worst clusters based on density/variance
+            const actualClusters = result.centroids.length;
+            const clusterCounts = Array(actualClusters).fill(0);
+            result.clusters.forEach(c => clusterCounts[c]++);
+            
+            let bestClusterIdx = 0;
+            let maxCount = -1;
+            for (let c = 0; c < actualClusters; c++) {
+                if (clusterCounts[c] > maxCount) {
+                    maxCount = clusterCounts[c];
+                    bestClusterIdx = c;
+                }
+            }
+            
+            const bestCentroid = result.centroids[bestClusterIdx];
+            const bestCentroidValue = Array.isArray(bestCentroid) ? bestCentroid[0] : bestCentroid.centroid[0];
+            
+            // Confidence Score (0 to 10)
+            const dominantDirection = bullishCount > bearishCount ? 1 : -1;
+            const dominantPercentage = Math.max(bullishCount, bearishCount) / numPermutations;
+            const confidenceScore = Math.round(dominantPercentage * 10);
+            
+            aiSuperTrend.push({
+                value: bestCentroidValue,
+                trend: dominantDirection,
+                confidence: confidenceScore,
+                isSignal: i > 0 && (permutations[0][i].trend !== permutations[0][i-1].trend) // Simplify signal detection
+            });
+            
+        } catch (err) {
+            console.error("AI SuperTrend Error at index", i, err);
+            aiSuperTrend.push(null);
+        }
     }
-
-    let allTps = [...new Set(recentPeaks)];
-
-    if (allTps.length < 3) {
-      const highestRecent = allTps[allTps.length - 1];
-      const olderPeaks = findPeaks(olderData).filter(p => p > highestRecent).sort((a, b) => a - b);
-      allTps = allTps.concat([...new Set(olderPeaks)]);
-    }
-
-    while (allTps.length < 3) {
-      allTps.push(allTps[allTps.length - 1] + risk);
-    }
-
-    tp1 = allTps[0];
-    tp2 = allTps[1];
-    tp3 = allTps[2];
-  } else if (tempType === 'SHORT') {
-    // SL: Recent 20-candle high plus padding
-    stopLoss = slSwingHigh + slPadding;
     
-    let risk = stopLoss - entry;
-    if (risk <= 0) risk = currentPrice * 0.001; // Fallback
+    // Smooth the confidence for AMA (Adaptive Moving Average)
+    let ama = [];
+    let currentAMA = klines[0].close;
     
-    let recentValleys = findValleys(recent30).filter(v => v < entry).sort((a, b) => b - a);
-    if (recentValleys.length === 0) {
-      if (slSwingLow < entry) recentValleys = [slSwingLow];
-      else recentValleys = [entry - risk * 1.5];
+    for (let i = 0; i < klines.length; i++) {
+        if (!aiSuperTrend[i]) {
+            ama.push(currentAMA);
+            continue;
+        }
+        
+        const close = klines[i].close;
+        const confidence = aiSuperTrend[i].confidence; // 0 to 10
+        
+        // Dynamic smoothing: high confidence = fast reaction, low confidence = slow reaction
+        const smoothing = Math.max(0.05, (confidence / 10) * 0.3); 
+        currentAMA = currentAMA + smoothing * (close - currentAMA);
+        ama.push(currentAMA);
     }
-
-    let allTps = [...new Set(recentValleys)];
-
-    if (allTps.length < 3) {
-      const lowestRecent = allTps[allTps.length - 1];
-      const olderValleys = findValleys(olderData).filter(v => v < lowestRecent).sort((a, b) => b - a);
-      allTps = allTps.concat([...new Set(olderValleys)]);
-    }
-
-    while (allTps.length < 3) {
-      allTps.push(allTps[allTps.length - 1] - risk);
-    }
-
-    tp1 = allTps[0];
-    tp2 = allTps[1];
-    tp3 = allTps[2];
-  } else {
-    entry = currentPrice;
-    tp1 = currentPrice;
-    tp2 = currentPrice;
-    tp3 = currentPrice;
-    stopLoss = currentPrice;
-  }
-  
-  takeProfit = tp1;
-
-  let type = tempType;
-  let setupReasons = [];
-  let indicatorsList = [];
-
-  // Generate Strings using the properly clamped TP/SL values
-  if (type === 'LONG') {
-    setupReasons = [...longReasons];
-    setupReasons.push(`진입가 ${formatPrice(currentPrice)}에서 TP1(${formatPrice(tp1)}) 도달 시 수익 실현을 권장합니다.`);
-    indicatorsList = [`RSI: ${currentRsi.toFixed(1)}`, `CCI: ${currentCci.toFixed(0)}`, `Score: ${Math.floor(longCount)}`];
-  } else if (type === 'SHORT') {
-    setupReasons = [...shortReasons];
-    setupReasons.push(`진입가 ${formatPrice(currentPrice)}에서 TP1(${formatPrice(tp1)}) 도달 시 수익 실현을 권장합니다.`);
-    indicatorsList = [`RSI: ${currentRsi.toFixed(1)}`, `CCI: ${currentCci.toFixed(0)}`, `Score: ${Math.floor(shortCount)}`];
-  } else {
-    if (shortCount >= 2 && exchange === 'Upbit') {
-      setupReasons = [
-        ...shortReasons,
-        `⚠️ 하락(SHORT) 시그널 조건이 충족되었으나, 업비트는 현물 거래(Spot)만 지원하므로 공매도가 불가능합니다.`,
-        `신규 진입을 피하고 관망을 권장합니다.`
-      ];
-      indicatorsList = [`RSI: ${currentRsi.toFixed(1)}`, `CCI: ${currentCci.toFixed(0)}`, `Score: ${Math.floor(shortCount)}`];
-    } else {
-      setupReasons = [
-        `현재 상승/하락을 지지하는 지표가 2개 미만입니다. (현재 LONG 점수: ${Math.floor(longCount)}, SHORT 점수: ${Math.floor(shortCount)})`,
-        `방향성이 뚜렷하지 않은 횡보 구간이므로 관망을 권장합니다.`
-      ];
-      indicatorsList = [`RSI: ${currentRsi.toFixed(1)}`, 'Neutral'];
-    }
-  }
-
-  let tradePlan = null;
-  if (type !== 'NEUTRAL') {
-    tradePlan = {
-      entryRange: `${formatPrice(entry * (1 - entrySpread))} – ${formatPrice(entry * (1 + entrySpread))}`,
-      sl: formatPrice(stopLoss),
-      tp1: formatPrice(tp1),
-      tp2: formatPrice(tp2),
-      tp3: formatPrice(tp3)
+    
+    return {
+        data: aiSuperTrend,
+        ama: ama
     };
-  }
-
-  // Align data for charting
-  const alignData = (resultArr) => {
-    if (!resultArr || resultArr.length === 0) return [];
-    return data.slice(data.length - resultArr.length).map((d, i) => ({
-      time: d.time,
-      value: resultArr[i]
-    }));
-  };
-
-  const sma20Data = alignData(ema20Result);
-  const sma200Data = alignData(ema200Result);
-  
-  const rsiData = alignData(rsiResult);
-
-  // For MACD, we need an object: { time, macd, signal, histogram }
-  // lightweight-charts handles single value per series. We must split them.
-  const macdAligned = rsiResult.length > 0 ? data.slice(data.length - macdResult.length) : [];
-  const macdLineData = [];
-  const macdSignalData = [];
-  const macdHistData = [];
-  
-  macdResult.forEach((m, i) => {
-    if (m.MACD !== undefined) {
-      macdLineData.push({ time: macdAligned[i].time, value: m.MACD });
-      macdSignalData.push({ time: macdAligned[i].time, value: m.signal });
-      macdHistData.push({ 
-        time: macdAligned[i].time, 
-        value: m.histogram,
-        color: m.histogram >= 0 ? 'rgba(16, 185, 129, 0.8)' : 'rgba(239, 68, 68, 0.8)'
-      });
-    }
-  });
-
-  return {
-    type,
-    entry,
-    takeProfit,
-    stopLoss,
-    currentPrice,
-    indicators: indicatorsList,
-    setupReasons,
-    tradePlan,
-    support: [s1, s2],
-    resistance: [r1, r2],
-    sma20Data,
-    sma200Data,
-    rsiData,
-    macdLineData,
-    macdSignalData,
-    macdHistData
-  };
-};
+}
